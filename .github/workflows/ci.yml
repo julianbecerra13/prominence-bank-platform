@@ -31,6 +31,6 @@ jobs:
       - name: Django deployment security check
         env:
           DJANGO_SETTINGS_MODULE: config.settings.production
-          SECRET_KEY: ci-only-dummy-secret-not-used-anywhere-real
+          SECRET_KEY: ci-only-dummy-key-7f3a9c2e1b8d4605af2e9d7c3b1a6f80e5d4c3b2a190837465-not-real
           ALLOWED_HOSTS: .onrender.com
         run: python manage.py check --deploy --fail-level WARNING
