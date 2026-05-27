@@ -124,5 +124,9 @@ SIMPLE_JWT = {
 OTP_EXPIRY_MINUTES = 10
 OTP_MAX_ATTEMPTS = 5
 
+# Demo mode: surfaces the login OTP in the API response so the public demo is usable.
+# Decoupled from DEBUG on purpose: a demo can run with DEBUG=0 (no stack traces) and still be testable.
+DEMO_MODE = os.environ.get('DEMO_MODE', '0') == '1'
+
 # Redis
 REDIS_URL = os.environ.get('REDIS_URL', 'redis://redis:6379/0')

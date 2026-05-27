@@ -2,6 +2,9 @@ __pycache__/
 *.py[cod]
 *.pyo
 db.sqlite3
+.venv/
+venv/
+.pytest_cache/
 *.egg-info/
 .env
 node_modules/

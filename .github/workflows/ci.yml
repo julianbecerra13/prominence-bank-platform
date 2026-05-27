@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend:
+    name: Backend tests + security check
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Run test suite (pytest)
+        run: pytest
+
+      - name: Django deployment security check
+        env:
+          DJANGO_SETTINGS_MODULE: config.settings.production
+          SECRET_KEY: ci-only-dummy-secret-not-used-anywhere-real
+          ALLOWED_HOSTS: .onrender.com
+        run: python manage.py check --deploy --fail-level WARNING

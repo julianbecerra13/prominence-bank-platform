@@ -1,6 +1,6 @@
 # Prominence Bank – Core Banking & Digital Banking Platform
 
-A complete, production-ready core banking and digital banking platform built for **Prominence Bank**. Features a double-entry ledger engine, multi-currency accounts, institutional-grade security with OTP two-factor authentication, maker-checker approval workflows, KYC/AML controls, bank instruments issuance, and comprehensive audit trails.
+A full-stack **core-banking demo** that explores how a digital bank works under the hood: a double-entry ledger engine, multi-currency accounts, OTP two-factor authentication, maker-checker approval workflows, KYC/AML controls, bank-instrument issuance, and an immutable audit trail. Built as a portfolio project to go deep on the parts that make financial software hard — correctness, concurrency, security and auditability.
 
 ![Django](https://img.shields.io/badge/Django-5.1-092E20?logo=django)
 ![React](https://img.shields.io/badge/React-18-61DAFB?logo=react)
@@ -20,17 +20,17 @@ A complete, production-ready core banking and digital banking platform built for
 ### Launch (Single Command)
 
 ```bash
-git clone https://github.com/julianbecerra13/-prominence-bank-platform.git
-cd -prominence-bank-platform
+git clone https://github.com/julianbecerra13/prominence-bank-platform.git
+cd prominence-bank-platform
 cp .env.example .env
-docker-compose up --build -d
+docker compose up --build -d
 ```
 
-Wait ~2 minutes for containers to build, then run:
+Containers seed themselves on first boot. If you need to (re)seed manually:
 
 ```bash
-docker exec prominence-bank-backend-1 python manage.py migrate --noinput
-docker exec prominence-bank-backend-1 python manage.py seed_demo --no-input
+docker compose exec backend python manage.py migrate --noinput
+docker compose exec backend python manage.py seed_demo --no-input
 ```
 
 ### Access
@@ -264,33 +264,27 @@ prominence-bank/
 
 ---
 
-## Testing
+## Testing & CI
 
-Run the automated test suite (55 tests covering all modules):
+Two complementary layers:
+
+**1. Unit tests (pytest + pytest-django)** — fast, isolated tests on in-memory SQLite that verify the ledger invariants directly, with no running server:
 
 ```bash
-# Reset database and run tests
-docker exec prominence-bank-backend-1 python manage.py flush --noinput
-docker exec prominence-bank-backend-1 python manage.py seed_demo --no-input
+cd backend
+pip install -r requirements-dev.txt
+pytest
+```
+
+They assert the properties that matter for a ledger: every transaction is a balanced double entry (debits == credits), holds move money between balance buckets without changing the total, transfers conserve money across accounts, an account cannot be overdrawn, ledger entries are immutable, and money operations are idempotent under retries.
+
+**2. Integration smoke script** — `scripts/test_all.sh` drives the full HTTP API against a running, seeded server (auth, KYC, deposits, holds, maker-checker, RBAC, multi-tenant isolation). Requires `bash`, `curl` and `node`:
+
+```bash
 bash scripts/test_all.sh
 ```
 
-### Test Coverage
-
-| Module | Tests | What's Verified |
-|--------|-------|-----------------|
-| Auth & OTP | 5 | Login, OTP generation, JWT, /me endpoint |
-| Customers & KYC | 5 | CRUD, approve, reject |
-| Accounts | 2 | Open account, initial balance |
-| Deposits (Ledger) | 4 | Double-entry posting, balance accumulation |
-| Holds | 7 | Place/release, available/held/ledger integrity |
-| Maker-Checker | 5 | Review, same-user block, cross-user approval |
-| Instruments | 3 | 9 types loaded, issue BG |
-| Audit Logs | 3 | Auto-logging, filter by type |
-| Client Portal | 11 | Dashboard, transactions, beneficiaries, wire, PDF |
-| Security & RBAC | 7 | Viewer read-only, client blocked from admin, lockout |
-| Multi-client | 3 | Separate client data isolation |
-| **Total** | **55** | **0 failures** |
+**Continuous integration** — `.github/workflows/ci.yml` runs the pytest suite and `python manage.py check --deploy` (Django's deployment security checklist) on every push.
 
 ---
 
@@ -345,18 +339,8 @@ CORS_ALLOWED_ORIGINS=https://yourdomain.com
 
 ---
 
-## Support & Warranty
+## About this project
 
-- **90-Day Warranty** post go-live: bug fixes and stability corrections at no additional cost
-- **Critical Coverage:** login/OTP, portal access, ledger functions, deposits/holds, statements
-- **Priority Handling:** critical incidents receive priority response until service is restored
-- **Post-Warranty:** hourly support model or optional retainer
+This is a portfolio project — a realistic core-banking platform built to practice the hard parts of financial software: a correct double-entry ledger, concurrency-safe and idempotent money operations, OTP/JWT authentication, maker-checker segregation of duties, and an immutable audit trail. It is a demo for learning and demonstration, not a live financial service.
 
----
-
-## Contact
-
-**Prominence Bank Corp.**
-ETMO Licensed Entity | License No. 05052025-A
-Website: [prominencebank.com](https://prominencebank.com)
-Support: helpdesk@prominencebank.com
+**Author:** Julian Becerra — [github.com/julianbecerra13](https://github.com/julianbecerra13)

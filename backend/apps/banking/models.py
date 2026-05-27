@@ -120,6 +120,8 @@ class Transaction(models.Model):
     ]
 
     reference = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    # Client-supplied key so a retried/double-clicked money operation posts only once.
+    idempotency_key = models.CharField(max_length=255, null=True, blank=True, unique=True)
     transaction_type = models.CharField(max_length=20, choices=TRANSACTION_TYPE_CHOICES)
     description = models.CharField(max_length=500)
     amount = models.DecimalField(max_digits=19, decimal_places=4)

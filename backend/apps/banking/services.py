@@ -1,6 +1,7 @@
 from decimal import Decimal
 
 from django.db import transaction as db_transaction
+from django.db.models import Sum
 from django.utils import timezone
 
 from .models import BankAccount, Transaction, LedgerEntry, Hold
@@ -15,7 +16,14 @@ class AccountNotActiveError(Exception):
 
 
 class BankingService:
-    """Double-entry posting engine. Every financial operation creates exactly 2 ledger entries."""
+    """Double-entry posting engine. Every financial operation creates exactly 2 ledger entries.
+
+    Money-moving operations are:
+      - idempotent: an optional `idempotency_key` makes a retried/double-clicked request post once.
+      - concurrency-safe: balances are read under a row-level lock (SELECT ... FOR UPDATE) inside
+        the same atomic transaction, so two simultaneous requests can't both pass a balance check
+        and overdraw an account (TOCTOU race).
+    """
 
     # The bank's internal operating account for deposits/withdrawals
     OPERATING_ACCOUNT_NUMBER = 'PB-OPS-00000001'
@@ -39,10 +47,21 @@ class BankingService:
         if account.status != 'active':
             raise AccountNotActiveError(f"Account {account.account_number} is not active")
 
+    @staticmethod
+    def _existing_for_key(idempotency_key):
+        """Return the transaction already posted for this key, if any (idempotency guard)."""
+        if not idempotency_key:
+            return None
+        return Transaction.objects.filter(idempotency_key=idempotency_key).first()
+
+    @staticmethod
+    def _lock(account):
+        """Re-fetch the account row with FOR UPDATE so balance checks are race-safe."""
+        return BankAccount.objects.select_for_update().get(pk=account.pk)
+
     @classmethod
     def _create_ledger_entry(cls, transaction_obj, account, entry_type, amount, balance_type, posted_by):
         # Calculate running balance
-        from django.db.models import Sum, Q
         existing = account.ledger_entries.filter(balance_type=balance_type)
         credits_sum = existing.filter(entry_type='credit').aggregate(t=Sum('amount'))['t'] or Decimal('0')
         debits_sum = existing.filter(entry_type='debit').aggregate(t=Sum('amount'))['t'] or Decimal('0')
@@ -64,10 +83,15 @@ class BankingService:
 
     @classmethod
     @db_transaction.atomic
-    def deposit(cls, account, amount, description, posted_by):
+    def deposit(cls, account, amount, description, posted_by, idempotency_key=None):
         """Deposit funds into an account. Debits operating, credits customer."""
-        cls._validate_account(account)
+        existing = cls._existing_for_key(idempotency_key)
+        if existing:
+            return existing
+
         amount = Decimal(str(amount))
+        account = cls._lock(account)
+        cls._validate_account(account)
 
         operating = cls.get_operating_account()
 
@@ -81,6 +105,7 @@ class BankingService:
             credit_account=account,
             created_by=posted_by,
             posted_at=timezone.now(),
+            idempotency_key=idempotency_key,
         )
 
         # Double entry: debit operating, credit customer
@@ -94,10 +119,15 @@ class BankingService:
 
     @classmethod
     @db_transaction.atomic
-    def place_hold(cls, account, amount, reason, placed_by, expires_at=None):
+    def place_hold(cls, account, amount, reason, placed_by, expires_at=None, idempotency_key=None):
         """Place a hold: moves funds from available to held."""
-        cls._validate_account(account)
+        existing = cls._existing_for_key(idempotency_key)
+        if existing:
+            return existing, existing.holds.first() if hasattr(existing, 'holds') else None
+
         amount = Decimal(str(amount))
+        account = cls._lock(account)
+        cls._validate_account(account)
 
         if account.available_balance < amount:
             raise InsufficientFundsError(f"Available balance {account.available_balance} < hold amount {amount}")
@@ -112,6 +142,7 @@ class BankingService:
             credit_account=account,
             created_by=placed_by,
             posted_at=timezone.now(),
+            idempotency_key=idempotency_key,
         )
 
         # Debit available, credit held
@@ -134,7 +165,7 @@ class BankingService:
     @db_transaction.atomic
     def release_hold(cls, hold, released_by):
         """Release a hold: moves funds from held back to available."""
-        account = hold.account
+        account = cls._lock(hold.account)
         amount = hold.amount
 
         txn = Transaction.objects.create(
@@ -163,11 +194,22 @@ class BankingService:
 
     @classmethod
     @db_transaction.atomic
-    def internal_transfer(cls, from_account, to_account, amount, description, initiated_by):
+    def internal_transfer(cls, from_account, to_account, amount, description, initiated_by, idempotency_key=None):
         """Transfer between two customer accounts."""
+        existing = cls._existing_for_key(idempotency_key)
+        if existing:
+            return existing
+
+        amount = Decimal(str(amount))
+
+        # Lock both rows in a deterministic order (by pk) to avoid deadlocks.
+        order = sorted([from_account.pk, to_account.pk])
+        locked = {a.pk: a for a in BankAccount.objects.select_for_update().filter(pk__in=order)}
+        from_account = locked[from_account.pk]
+        to_account = locked[to_account.pk]
+
         cls._validate_account(from_account)
         cls._validate_account(to_account)
-        amount = Decimal(str(amount))
 
         if from_account.available_balance < amount:
             raise InsufficientFundsError(
@@ -184,6 +226,7 @@ class BankingService:
             credit_account=to_account,
             created_by=initiated_by,
             posted_at=timezone.now(),
+            idempotency_key=idempotency_key,
         )
 
         cls._create_ledger_entry(txn, from_account, 'debit', amount, 'available', initiated_by)
@@ -196,10 +239,15 @@ class BankingService:
 
     @classmethod
     @db_transaction.atomic
-    def adjustment(cls, account, amount, description, posted_by, is_credit=True):
+    def adjustment(cls, account, amount, description, posted_by, is_credit=True, idempotency_key=None):
         """Admin balance adjustment."""
-        cls._validate_account(account)
+        existing = cls._existing_for_key(idempotency_key)
+        if existing:
+            return existing
+
         amount = Decimal(str(amount))
+        account = cls._lock(account)
+        cls._validate_account(account)
         operating = cls.get_operating_account()
 
         txn = Transaction.objects.create(
@@ -212,6 +260,7 @@ class BankingService:
             credit_account=account if is_credit else operating,
             created_by=posted_by,
             posted_at=timezone.now(),
+            idempotency_key=idempotency_key,
         )
 
         if is_credit:

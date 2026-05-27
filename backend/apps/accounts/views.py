@@ -62,8 +62,8 @@ class LoginView(APIView):
             'message': 'OTP sent to your email',
             'email': email,
             'otp_required': True,
-            # In dev mode, include OTP for easy demo
-            **(({'dev_otp': code} if settings.DEBUG else {})),
+            # Only surfaced in demo mode (never tie this to DEBUG in a financial API).
+            **(({'dev_otp': code} if settings.DEMO_MODE else {})),
         })
 
 

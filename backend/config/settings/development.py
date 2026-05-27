@@ -14,3 +14,6 @@ REST_FRAMEWORK['DEFAULT_RENDERER_CLASSES'] = (
 
 # Print OTP to console instead of sending email
 OTP_BACKEND = 'console'
+
+# Surface the login OTP in the API response so the local demo is one-click.
+DEMO_MODE = True
